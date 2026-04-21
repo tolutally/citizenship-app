@@ -4,7 +4,7 @@
   "private": true,
   "description": "CanadaCitizenTest.ca frontend + dummy backend API",
   "scripts": {
-    "start": "node backend/src/server.js",
-    "check": "node --check backend/src/server.js && node --check backend/src/routes/api.js && node --check backend/src/utils/http.js && node --check backend/src/utils/summary.js && node --check frontend/public/app.js"
+    "start": "node server.js",
+    "check": "node --check server.js && node --check app.js"
   }
 }

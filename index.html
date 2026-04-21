@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CanadaCitizenTest.ca</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">CanadaCitizenTest.ca</p>
+          <h1>Practice smarter for the Canadian citizenship test.</h1>
+        </div>
+        <button id="themeToggle" class="ghost-btn" aria-label="Toggle high contrast mode">High contrast</button>
+      </header>
+
+      <main class="layout">
+        <section class="card progress-card" aria-label="Progress overview">
+          <h2>Progress Snapshot</h2>
+          <div class="stats-grid">
+            <article>
+              <p class="stat-label">Average score</p>
+              <p class="stat-value" id="avgScore">82%</p>
+            </article>
+            <article>
+              <p class="stat-label">Practices done</p>
+              <p class="stat-value" id="practiceCount">12</p>
+            </article>
+            <article>
+              <p class="stat-label">Current streak</p>
+              <p class="stat-value" id="streak">5 days</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="card quiz-card" aria-live="polite">
+          <div class="quiz-head">
+            <p class="chip" id="setLabel">Practice 1 · Question 1/20</p>
+            <p class="timer" id="timer">00:20</p>
+          </div>
+          <h2 id="questionText">What are the three main levels of government in Canada?</h2>
+
+          <form id="answerForm" class="answers" autocomplete="off">
+            <label class="answer-option">
+              <input type="radio" name="answer" value="Federal, provincial, municipal" />
+              <span>Federal, provincial, municipal</span>
+            </label>
+            <label class="answer-option">
+              <input type="radio" name="answer" value="National, local, indigenous" />
+              <span>National, local, indigenous</span>
+            </label>
+            <label class="answer-option">
+              <input type="radio" name="answer" value="Royal, provincial, city" />
+              <span>Royal, provincial, city</span>
+            </label>
+            <label class="answer-option">
+              <input type="radio" name="answer" value="Federal, territorial, borough" />
+              <span>Federal, territorial, borough</span>
+            </label>
+            <div class="actions">
+              <button type="submit" class="primary-btn">Check answer</button>
+              <button type="button" id="nextBtn" class="ghost-btn" disabled>Next question</button>
+            </div>
+          </form>
+
+          <div id="feedback" class="feedback hidden" role="status"></div>
+        </section>
+
+        <aside class="card recommendations-card" aria-label="Recommendations">
+          <h2>Overview & Recommendations</h2>
+          <ul id="overviewList" class="overview-list">
+            <li><strong>Strong topic:</strong> Rights and responsibilities</li>
+            <li><strong>Needs work:</strong> Canadian history timeline</li>
+            <li><strong>Recommendation:</strong> Complete Practice 3 and 4 in timed mode.</li>
+          </ul>
+          <button id="newPracticeBtn" class="primary-btn full">Generate next practice set</button>
+        </aside>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
