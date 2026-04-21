@@ -6,7 +6,20 @@ const { serveFile } = require('./utils/http');
 const PORT = process.env.PORT || 3000;
 const frontendRoot = path.join(__dirname, '../../frontend/public');
 
-const staticFiles = new Set(['/styles.css', '/app.js']);
+function resolveFrontendFile(pathname) {
+  if (pathname === '/' || pathname === '/index.html') {
+    return path.join(frontendRoot, 'index.html');
+  }
+
+  const sanitizedPath = pathname.replace(/^\/+/, '');
+  const candidate = path.normalize(path.join(frontendRoot, sanitizedPath));
+
+  if (!candidate.startsWith(frontendRoot)) {
+    return null;
+  }
+
+  return candidate;
+}
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -16,14 +29,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
-    serveFile(res, path.join(frontendRoot, 'index.html'));
-    return;
-  }
-
-  if (req.method === 'GET' && staticFiles.has(url.pathname)) {
-    serveFile(res, path.join(frontendRoot, url.pathname));
-    return;
+  if (req.method === 'GET') {
+    const filePath = resolveFrontendFile(url.pathname);
+    if (filePath) {
+      serveFile(res, filePath);
+      return;
+    }
   }
 
   res.writeHead(404);
