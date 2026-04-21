@@ -1,0 +1,10 @@
+{
+  "name": "canada-citizen-test",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CanadaCitizenTest.ca frontend + dummy backend API",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check app.js"
+  }
+}
