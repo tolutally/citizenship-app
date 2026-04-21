@@ -14,6 +14,12 @@ This repository is organized into separate backend and frontend folders for easi
 
 ```bash
 npm install
+npm run dev
+```
+
+Or:
+
+```bash
 npm start
 ```
 
