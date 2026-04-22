@@ -1,14 +1,6 @@
-# CanadaCitizenTest.ca (MVP)
+# CanadaCitizenTest.ca
 
-This repository is organized into separate backend and frontend folders for easier maintenance and updates.
-
-## Project structure
-
-- `backend/src/server.js` - HTTP server entrypoint.
-- `backend/src/routes` - API route handlers.
-- `backend/src/data` - in-memory dummy data.
-- `backend/src/utils` - shared helpers (HTTP + summary logic).
-- `frontend/public` - static web app assets (`index.html`, `styles.css`, `app.js`).
+This project now runs as a Next.js App Router application backed by Supabase.
 
 ## Run locally
 
@@ -17,13 +9,15 @@ npm install
 npm run dev
 ```
 
-Or:
-
-```bash
-npm start
-```
-
 Then open `http://localhost:3000`.
+
+## Main routes
+
+- `/` - quiz UI
+- `/api/practice-sets` - chapter-backed practice sets
+- `/api/practice-sets/[setId]` - question data for one chapter
+- `/api/attempts/grade` - grading endpoint
+- `/api/supabase-test` - Supabase connection check
 
 ## Verify
 
