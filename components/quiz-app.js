@@ -9,6 +9,7 @@ function formatTime(sec) {
 
 export default function QuizApp({ setId }) {
   const sessionKey = 'citizenship-ongoing-test';
+  const progressKey = 'citizenship-session-progress';
   const [practiceSets, setPracticeSets] = useState([]);
   const [activeSet, setActiveSet] = useState(null);
   const [distributionBySet, setDistributionBySet] = useState({});
@@ -25,6 +26,7 @@ export default function QuizApp({ setId }) {
   const [isChecking, setIsChecking] = useState(false);
   const [resumeData, setResumeData] = useState(null);
   const [showResumePrompt, setShowResumePrompt] = useState(false);
+  const [saveMessage, setSaveMessage] = useState('');
   const timerRef = useRef(null);
 
   const currentQuestion = activeSet?.questions?.[questionIndex] ?? null;
@@ -94,9 +96,6 @@ export default function QuizApp({ setId }) {
   }, [resumeData, activeSet]);
 
   const activeDistribution = activeSet ? distributionBySet[activeSet.id] || [] : [];
-  const distributionLabel = activeDistribution.length
-    ? activeDistribution.map((item) => `${item.chapter.split(' ')[0]} ${item.count}`).join(' · ')
-    : 'Loading mix...';
   const totalQuestions = activeSet?.questions?.length || 0;
   const answeredCount = Object.keys(answers).length;
   const progressPercent = totalQuestions ? Math.min((answeredCount / totalQuestions) * 100, 100) : 0;
@@ -201,6 +200,30 @@ export default function QuizApp({ setId }) {
     });
     const summary = await response.json();
 
+    if (typeof window !== 'undefined') {
+      let progress = { completed: 0, totalScore: 0 };
+      const storage = window.localStorage || window.sessionStorage;
+      const stored = storage.getItem(progressKey);
+      if (stored) {
+        try {
+          progress = JSON.parse(stored);
+        } catch {
+          progress = { completed: 0, totalScore: 0 };
+        }
+      }
+
+      const updatedCompleted = Number(progress.completed || 0) + 1;
+      const updatedTotalScore = Number(progress.totalScore || 0) + Number(summary.accuracy || 0);
+      const payload = {
+        completed: updatedCompleted,
+        totalScore: updatedTotalScore,
+        avgScore: Math.round(updatedTotalScore / updatedCompleted),
+        updatedAt: new Date().toISOString()
+      };
+      storage.setItem(progressKey, JSON.stringify(payload));
+      window.sessionStorage.setItem(progressKey, JSON.stringify(payload));
+    }
+
     setFeedback({
       visible: true,
       kind: 'success',
@@ -303,49 +326,64 @@ export default function QuizApp({ setId }) {
     setIsChecking(false);
   }
 
+  function handleSaveProgress() {
+    if (!activeSet || typeof window === 'undefined') {
+      return;
+    }
+
+    const payload = {
+      setId: activeSet.id,
+      setName: activeSet.name,
+      questionIndex,
+      answers,
+      answeredCount,
+      totalQuestions: activeSet.questions.length,
+      updatedAt: new Date().toISOString()
+    };
+
+    window.sessionStorage.setItem(sessionKey, JSON.stringify(payload));
+    setSaveMessage('Saved');
+    window.setTimeout(() => setSaveMessage(''), 1200);
+  }
+
   return (
     <div className="app-shell">
-      <header className="practice-header">
-        <div>
-          <p className="eyebrow">CanadaCitizenTest.ca</p>
-          <h1>{activeSet ? activeSet.name : 'Practice test'}</h1>
-          <p className="muted">20-second timer · Instant explanations · Focused recommendations</p>
-        </div>
-        <div className="practice-actions">
-          <Link className="ghost-btn" href="/">
-            Back home
+      <header className="practice-frame">
+        <div className="frame-row">
+          <Link className="frame-link" href="/">
+            Exit
           </Link>
-          <button
-            type="button"
-            id="themeToggle"
-            className="ghost-btn"
-            aria-label="Toggle high contrast mode"
-            onClick={() => document.body.classList.toggle('high-contrast')}
-          >
-            High contrast
-          </button>
+          <div className="frame-center" aria-live="polite">
+            <span className="frame-timer">{formatTime(countdown)}</span>
+          </div>
+          <div className="frame-right">
+            <span className="frame-count">
+              Question {Math.min(questionIndex + 1, totalQuestions || 20)} of {totalQuestions || 20}
+            </span>
+            <button type="button" className="ghost-btn frame-save" onClick={handleSaveProgress}>
+              Save
+            </button>
+            {saveMessage ? <span className="frame-saved">{saveMessage}</span> : null}
+          </div>
         </div>
       </header>
 
       <main className="layout">
-        <section className="card progress-card" aria-label="Progress overview">
-          <h2>Progress Snapshot</h2>
-          <div className="stats-grid">
-            <article>
-              <p className="stat-label">Average score</p>
-              <p className="stat-value">{stats.avgScore}</p>
-            </article>
-            <article>
-              <p className="stat-label">Practices done</p>
-              <p className="stat-value">{stats.practiceCount}</p>
-            </article>
-            <article>
-              <p className="stat-label">Current streak</p>
-              <p className="stat-value">{stats.streak}</p>
-            </article>
-          </div>
-        </section>
-
+        <aside className="card distribution-card" aria-live="polite">
+          <p className="distribution-title">Question mix</p>
+          {activeDistribution.length ? (
+            <ul className="distribution-list">
+              {activeDistribution.map((item) => (
+                <li key={item.chapter} className="distribution-item">
+                  <span>{item.chapter.split(' ')[0]}</span>
+                  <strong>{item.count}</strong>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="distribution-loading">Loading mix...</p>
+          )}
+        </aside>
         <section className="card quiz-card" aria-live="polite">
           <div className="quiz-head">
             <div className="chip-stack">
@@ -354,11 +392,7 @@ export default function QuizApp({ setId }) {
                 ? `${activeSet.name} · Question ${Math.min(questionIndex + 1, activeSet.questions.length)}/${activeSet.questions.length}`
                 : 'Loading practice set...'}
               </p>
-              <p className="chip chip-secondary" aria-live="polite">
-                {distributionLabel}
-              </p>
             </div>
-            <p className="timer">{formatTime(countdown)}</p>
           </div>
 
           <div className="progress-track" aria-live="polite">
@@ -429,20 +463,6 @@ export default function QuizApp({ setId }) {
             dangerouslySetInnerHTML={{ __html: feedback.visible ? feedback.html : '' }}
           />
         </section>
-
-        <aside className="card recommendations-card" aria-label="Recommendations">
-          <h2>Overview & Recommendations</h2>
-          <ul className="overview-list">
-            {overviewItems.map((item) => (
-              <li key={item.label}>
-                <strong>{item.label}:</strong> {item.value}
-              </li>
-            ))}
-          </ul>
-          <button type="button" className="primary-btn full" onClick={handleNextPractice}>
-            Start next test
-          </button>
-        </aside>
       </main>
     </div>
   );

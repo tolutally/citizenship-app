@@ -7,6 +7,8 @@ export default function Landing() {
   const [practiceSets, setPracticeSets] = useState([]);
   const [status, setStatus] = useState('loading');
   const [resumeSession, setResumeSession] = useState(null);
+  const [sessionProgress, setSessionProgress] = useState({ completed: 0, avgScore: 0 });
+  const [progressUpdatedAt, setProgressUpdatedAt] = useState('');
 
   useEffect(() => {
     async function loadSets() {
@@ -40,6 +42,47 @@ export default function Landing() {
       window.sessionStorage.removeItem('citizenship-ongoing-test');
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const progressKey = 'citizenship-session-progress';
+    const storage = window.localStorage || window.sessionStorage;
+    const stored = storage.getItem(progressKey) || window.sessionStorage.getItem(progressKey);
+    if (!stored) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(stored);
+      setSessionProgress({
+        completed: Number(parsed.completed || 0),
+        avgScore: Number(parsed.avgScore || 0)
+      });
+      setProgressUpdatedAt(parsed.updatedAt || '');
+    } catch {
+      window.sessionStorage.removeItem(progressKey);
+      window.localStorage.removeItem(progressKey);
+    }
+  }, []);
+
+  function handleResetSessionProgress() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const progressKey = 'citizenship-session-progress';
+    window.sessionStorage.removeItem(progressKey);
+    window.localStorage.removeItem(progressKey);
+    setSessionProgress({ completed: 0, avgScore: 0 });
+    setProgressUpdatedAt('');
+  }
+
+  const formattedProgressUpdatedAt = progressUpdatedAt
+    ? new Date(progressUpdatedAt).toLocaleString()
+    : 'Not started yet';
 
   const totalQuestions = useMemo(() => {
     return practiceSets.reduce((total, set) => total + (set.questionCount || 0), 0);
@@ -78,7 +121,6 @@ export default function Landing() {
       <header className="landing-hero">
         <div className="brand-row">
           <span className="brand-badge">CanadaCitizenTest.ca</span>
-          <span className="brand-tag">42 mock/practice sets · 20-second timer · Explanations</span>
         </div>
         <h1>Own the citizenship test with realistic mock exams.</h1>
         <p className="hero-lead">
@@ -114,6 +156,27 @@ export default function Landing() {
           </article>
         </div>
       </header>
+
+      <section className="session-tracker" aria-label="Session progress">
+        <div>
+          <p className="tracker-title">Session tracker</p>
+          <p className="tracker-meta">
+            Completed: {sessionProgress.completed} tests · Avg Score: {sessionProgress.avgScore}%
+          </p>
+          <p className="tracker-meta">Last updated: {formattedProgressUpdatedAt}</p>
+        </div>
+        <div className="tracker-dots" aria-hidden="true">
+          {Array.from({ length: 20 }).map((_, index) => (
+            <span
+              key={`dot-${index}`}
+              className={index < Math.min(sessionProgress.completed, 20) ? 'dot active' : 'dot'}
+            />
+          ))}
+        </div>
+        <button type="button" className="ghost-btn" onClick={handleResetSessionProgress}>
+          Reset session
+        </button>
+      </section>
 
       <section className="sets-section" id="practice-sets">
         <div className="sets-header">
