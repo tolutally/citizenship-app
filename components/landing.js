@@ -3,11 +3,43 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 
+function normalizeSessionProgress(parsed) {
+  const attempts = Array.isArray(parsed?.attempts)
+    ? parsed.attempts.map((attempt) => ({
+        setId: attempt.setId,
+        setName: attempt.setName,
+        correct: Number(attempt.correct || 0),
+        incorrect: Number(attempt.incorrect || 0),
+        total: Number(attempt.total || 0),
+        accuracy: Number(attempt.accuracy || 0),
+        passed: Boolean(attempt.passed),
+        completedAt: attempt.completedAt || ''
+      }))
+    : [];
+
+  if (attempts.length) {
+    const totalScore = attempts.reduce((sum, attempt) => sum + Number(attempt.accuracy || 0), 0);
+    return {
+      completed: attempts.length,
+      avgScore: Math.round(totalScore / attempts.length),
+      attempts,
+      updatedAt: parsed?.updatedAt || attempts[0]?.completedAt || ''
+    };
+  }
+
+  return {
+    completed: Number(parsed?.completed || 0),
+    avgScore: Number(parsed?.avgScore || 0),
+    attempts: [],
+    updatedAt: parsed?.updatedAt || ''
+  };
+}
+
 export default function Landing() {
   const [practiceSets, setPracticeSets] = useState([]);
   const [status, setStatus] = useState('loading');
   const [resumeSession, setResumeSession] = useState(null);
-  const [sessionProgress, setSessionProgress] = useState({ completed: 0, avgScore: 0 });
+  const [sessionProgress, setSessionProgress] = useState({ completed: 0, avgScore: 0, attempts: [] });
   const [progressUpdatedAt, setProgressUpdatedAt] = useState('');
 
   useEffect(() => {
@@ -57,11 +89,9 @@ export default function Landing() {
 
     try {
       const parsed = JSON.parse(stored);
-      setSessionProgress({
-        completed: Number(parsed.completed || 0),
-        avgScore: Number(parsed.avgScore || 0)
-      });
-      setProgressUpdatedAt(parsed.updatedAt || '');
+      const normalized = normalizeSessionProgress(parsed);
+      setSessionProgress(normalized);
+      setProgressUpdatedAt(normalized.updatedAt || '');
     } catch {
       window.sessionStorage.removeItem(progressKey);
       window.localStorage.removeItem(progressKey);
@@ -76,7 +106,7 @@ export default function Landing() {
     const progressKey = 'citizenship-session-progress';
     window.sessionStorage.removeItem(progressKey);
     window.localStorage.removeItem(progressKey);
-    setSessionProgress({ completed: 0, avgScore: 0 });
+    setSessionProgress({ completed: 0, avgScore: 0, attempts: [] });
     setProgressUpdatedAt('');
   }
 
@@ -87,6 +117,13 @@ export default function Landing() {
   const totalQuestions = useMemo(() => {
     return practiceSets.reduce((total, set) => total + (set.questionCount || 0), 0);
   }, [practiceSets]);
+
+  const attemptsBySet = useMemo(() => {
+    return sessionProgress.attempts.reduce((lookup, attempt) => {
+      lookup[String(attempt.setId)] = attempt;
+      return lookup;
+    }, {});
+  }, [sessionProgress.attempts]);
 
   const featuredSet = practiceSets[0];
 
@@ -157,11 +194,11 @@ export default function Landing() {
         </div>
       </header>
 
-      <section className="session-tracker" aria-label="Session progress">
+      <section className="session-tracker" id="session-tracker" aria-label="Session progress">
         <div>
           <p className="tracker-title">Session tracker</p>
           <p className="tracker-meta">
-            Completed: {sessionProgress.completed} tests · Avg Score: {sessionProgress.avgScore}%
+            Completed: {sessionProgress.completed} tests this session · Avg Score: {sessionProgress.avgScore}%
           </p>
           <p className="tracker-meta">Last updated: {formattedProgressUpdatedAt}</p>
         </div>
@@ -173,6 +210,18 @@ export default function Landing() {
             />
           ))}
         </div>
+        {sessionProgress.attempts.length ? (
+          <div className="tracker-attempts">
+            {sessionProgress.attempts.map((attempt) => (
+              <span
+                key={attempt.setId}
+                className={`tracker-attempt ${attempt.passed ? 'pass' : 'fail'}`}
+              >
+                {attempt.setName} · {attempt.correct}/{attempt.total} · {attempt.passed ? 'Passed' : 'Not passed'}
+              </span>
+            ))}
+          </div>
+        ) : null}
         <button type="button" className="ghost-btn" onClick={handleResetSessionProgress}>
           Reset session
         </button>
@@ -188,16 +237,28 @@ export default function Landing() {
           <div className="sets-error">Unable to load practice sets right now. Refresh to try again.</div>
         ) : (
           <div className="sets-grid">
-            {practiceSets.map((set) => (
-              <Link className="set-card" key={set.id} href={`/practice/${set.id}`}>
-                <div>
-                  <p className="set-eyebrow">{set.label}</p>
-                  <h3>{set.name}</h3>
-                  <p className="set-meta">{set.questionCount} questions</p>
-                </div>
-                <span className="set-action">Start →</span>
-              </Link>
-            ))}
+            {practiceSets.map((set) => {
+              const sessionAttempt = attemptsBySet[String(set.id)];
+
+              return (
+                <Link className="set-card" key={set.id} href={`/practice/${set.id}`}>
+                  <div>
+                    <p className="set-eyebrow">{set.label}</p>
+                    <h3>{set.name}</h3>
+                    <p className="set-meta">{set.questionCount} questions</p>
+                    {sessionAttempt ? (
+                      <div className="set-session-state">
+                        <span className={`set-session-tag ${sessionAttempt.passed ? 'pass' : 'fail'}`}>
+                          {sessionAttempt.passed ? 'Passed' : 'Not passed'}
+                        </span>
+                        <span className="set-session-score">{sessionAttempt.correct}/{sessionAttempt.total}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                  <span className="set-action">{sessionAttempt ? 'Retry →' : 'Start →'}</span>
+                </Link>
+              );
+            })}
           </div>
         )}
       </section>

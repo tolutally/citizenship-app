@@ -1,10 +1,16 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 
 function formatTime(sec) {
   return `00:${String(sec).padStart(2, '0')}`;
+}
+
+function formatDuration(totalSeconds) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
 export default function QuizApp({ setId }) {
@@ -12,6 +18,7 @@ export default function QuizApp({ setId }) {
   const progressKey = 'citizenship-session-progress';
   const [practiceSets, setPracticeSets] = useState([]);
   const [activeSet, setActiveSet] = useState(null);
+  const [completedSummary, setCompletedSummary] = useState(null);
   const [distributionBySet, setDistributionBySet] = useState({});
   const [questionIndex, setQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState({});
@@ -27,7 +34,9 @@ export default function QuizApp({ setId }) {
   const [resumeData, setResumeData] = useState(null);
   const [showResumePrompt, setShowResumePrompt] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
+  const [reviewFilter, setReviewFilter] = useState('all');
   const timerRef = useRef(null);
+  const startedAtRef = useRef(Date.now());
 
   const currentQuestion = activeSet?.questions?.[questionIndex] ?? null;
 
@@ -43,6 +52,7 @@ export default function QuizApp({ setId }) {
 
     try {
       const parsed = JSON.parse(stored);
+      startedAtRef.current = parsed.startedAt ? new Date(parsed.startedAt).getTime() : Date.now();
       setResumeData(parsed);
     } catch {
       window.sessionStorage.removeItem(sessionKey);
@@ -101,7 +111,11 @@ export default function QuizApp({ setId }) {
   const progressPercent = totalQuestions ? Math.min((answeredCount / totalQuestions) * 100, 100) : 0;
 
   useEffect(() => {
-    if (!currentQuestion) {
+    if (!currentQuestion || currentQuestion.id === 'complete') {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+      setCountdown(0);
       return undefined;
     }
 
@@ -139,7 +153,10 @@ export default function QuizApp({ setId }) {
     const response = await fetch(`/api/practice-sets/${setId}`);
     const set = await response.json();
 
+    startedAtRef.current = Date.now();
     setActiveSet(set);
+    setCompletedSummary(null);
+    setReviewFilter('all');
     setQuestionIndex(0);
     setAnswers({});
     setFeedback({ visible: false, kind: 'success', html: '' });
@@ -175,6 +192,7 @@ export default function QuizApp({ setId }) {
       answers,
       answeredCount,
       totalQuestions: activeSet.questions.length,
+      startedAt: new Date(startedAtRef.current).toISOString(),
       updatedAt: new Date().toISOString()
     };
 
@@ -199,26 +217,48 @@ export default function QuizApp({ setId }) {
       body: JSON.stringify({ setId: activeSet.id, answers })
     });
     const summary = await response.json();
+    const finishedAt = Date.now();
+    const elapsedSeconds = Math.max(Math.round((finishedAt - startedAtRef.current) / 1000), 0);
 
     if (typeof window !== 'undefined') {
-      let progress = { completed: 0, totalScore: 0 };
+      let progress = { attempts: [] };
       const storage = window.localStorage || window.sessionStorage;
       const stored = storage.getItem(progressKey);
       if (stored) {
         try {
           progress = JSON.parse(stored);
         } catch {
-          progress = { completed: 0, totalScore: 0 };
+          progress = { attempts: [] };
         }
       }
 
-      const updatedCompleted = Number(progress.completed || 0) + 1;
-      const updatedTotalScore = Number(progress.totalScore || 0) + Number(summary.accuracy || 0);
+      const previousAttempts = Array.isArray(progress.attempts)
+        ? progress.attempts.filter((attempt) => String(attempt.setId) !== String(summary.setId))
+        : [];
+      const latestAttempt = {
+        setId: summary.setId,
+        setName: summary.setName,
+        correct: Number(summary.correct || 0),
+        incorrect: Number(summary.incorrect || 0),
+        total: Number(summary.total || 0),
+        accuracy: Number(summary.accuracy || 0),
+        passed: Boolean(summary.passed),
+        elapsedSeconds,
+        completedAt: new Date().toISOString()
+      };
+      const attempts = [latestAttempt, ...previousAttempts].sort(
+        (left, right) => new Date(right.completedAt || 0).getTime() - new Date(left.completedAt || 0).getTime()
+      );
+      const updatedTotalScore = attempts.reduce(
+        (totalScore, attempt) => totalScore + Number(attempt.accuracy || 0),
+        0
+      );
       const payload = {
-        completed: updatedCompleted,
+        completed: attempts.length,
         totalScore: updatedTotalScore,
-        avgScore: Math.round(updatedTotalScore / updatedCompleted),
-        updatedAt: new Date().toISOString()
+        avgScore: attempts.length ? Math.round(updatedTotalScore / attempts.length) : 0,
+        updatedAt: latestAttempt.completedAt,
+        attempts
       };
       storage.setItem(progressKey, JSON.stringify(payload));
       window.sessionStorage.setItem(progressKey, JSON.stringify(payload));
@@ -236,8 +276,9 @@ export default function QuizApp({ setId }) {
       { label: 'Recommendation', value: summary.recommendation }
     ]);
     setStats((current) => ({ ...current, avgScore: `${summary.accuracy}%` }));
-    setActiveSet({
-      ...activeSet,
+    setCompletedSummary({ ...summary, elapsedSeconds });
+    setActiveSet((current) => ({
+      ...current,
       questions: [
         {
           id: 'complete',
@@ -246,7 +287,7 @@ export default function QuizApp({ setId }) {
           topic: summary.topicNeedingPractice
         }
       ]
-    });
+    }));
     setQuestionIndex(0);
   }
 
@@ -284,6 +325,14 @@ export default function QuizApp({ setId }) {
     const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % practiceSets.length : 0;
     await loadPracticeSet(practiceSets[nextIndex].id);
     setIsChecking(false);
+  }
+
+  async function handleRetry() {
+    if (!activeSet?.id) {
+      return;
+    }
+
+    await loadPracticeSet(activeSet.id);
   }
 
   function handleNextQuestion() {
@@ -338,6 +387,7 @@ export default function QuizApp({ setId }) {
       answers,
       answeredCount,
       totalQuestions: activeSet.questions.length,
+      startedAt: new Date(startedAtRef.current).toISOString(),
       updatedAt: new Date().toISOString()
     };
 
@@ -345,6 +395,32 @@ export default function QuizApp({ setId }) {
     setSaveMessage('Saved');
     window.setTimeout(() => setSaveMessage(''), 1200);
   }
+
+  const isCompleteView = currentQuestion?.id === 'complete' && completedSummary;
+  const reviewCounts = useMemo(() => {
+    const results = completedSummary?.results || [];
+    const correct = results.filter((result) => result.isCorrect).length;
+    const wrong = results.length - correct;
+
+    return {
+      all: results.length,
+      correct,
+      wrong
+    };
+  }, [completedSummary]);
+  const filteredResults = useMemo(() => {
+    const results = completedSummary?.results || [];
+
+    if (reviewFilter === 'correct') {
+      return results.filter((result) => result.isCorrect);
+    }
+
+    if (reviewFilter === 'wrong') {
+      return results.filter((result) => !result.isCorrect);
+    }
+
+    return results;
+  }, [completedSummary, reviewFilter]);
 
   return (
     <div className="app-shell">
@@ -354,114 +430,259 @@ export default function QuizApp({ setId }) {
             Exit
           </Link>
           <div className="frame-center" aria-live="polite">
-            <span className="frame-timer">{formatTime(countdown)}</span>
+            <span className="frame-timer">{isCompleteView ? 'Done' : formatTime(countdown)}</span>
           </div>
           <div className="frame-right">
             <span className="frame-count">
-              Question {Math.min(questionIndex + 1, totalQuestions || 20)} of {totalQuestions || 20}
+              {isCompleteView
+                ? 'Results'
+                : `Question ${Math.min(questionIndex + 1, totalQuestions || 20)} of ${totalQuestions || 20}`}
             </span>
-            <button type="button" className="ghost-btn frame-save" onClick={handleSaveProgress}>
-              Save
-            </button>
-            {saveMessage ? <span className="frame-saved">{saveMessage}</span> : null}
+            {!isCompleteView ? (
+              <>
+                <button type="button" className="ghost-btn frame-save" onClick={handleSaveProgress}>
+                  Save
+                </button>
+                {saveMessage ? <span className="frame-saved">{saveMessage}</span> : null}
+              </>
+            ) : null}
           </div>
         </div>
       </header>
 
-      <main className="layout">
-        <aside className="card distribution-card" aria-live="polite">
-          <p className="distribution-title">Question mix</p>
-          {activeDistribution.length ? (
-            <ul className="distribution-list">
-              {activeDistribution.map((item) => (
-                <li key={item.chapter} className="distribution-item">
-                  <span>{item.chapter.split(' ')[0]}</span>
-                  <strong>{item.count}</strong>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="distribution-loading">Loading mix...</p>
-          )}
-        </aside>
+      <main className={isCompleteView ? 'layout result-layout' : 'layout'}>
+        {!isCompleteView ? (
+          <aside className="card distribution-card" aria-live="polite">
+            <p className="distribution-title">Question mix</p>
+            {activeDistribution.length ? (
+              <ul className="distribution-list">
+                {activeDistribution.map((item) => (
+                  <li key={item.chapter} className="distribution-item">
+                    <span>{item.chapter.split(' ')[0]}</span>
+                    <strong>{item.count}</strong>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="distribution-loading">Loading mix...</p>
+            )}
+          </aside>
+        ) : null}
         <section className="card quiz-card" aria-live="polite">
-          <div className="quiz-head">
-            <div className="chip-stack">
-              <p className="chip">
-              {activeSet
-                ? `${activeSet.name} · Question ${Math.min(questionIndex + 1, activeSet.questions.length)}/${activeSet.questions.length}`
-                : 'Loading practice set...'}
-              </p>
-            </div>
-          </div>
-
-          <div className="progress-track" aria-live="polite">
-            <div className="progress-meta">
-              <span>Progress</span>
-              <strong>{answeredCount}/{totalQuestions || 20} answered</strong>
-            </div>
-            <div
-              className="progress-bar"
-              role="progressbar"
-              aria-valuemin="0"
-              aria-valuemax={totalQuestions || 20}
-              aria-valuenow={answeredCount}
-            >
-              <span style={{ width: `${progressPercent}%` }} />
-            </div>
-          </div>
-
-          {showResumePrompt ? (
-            <div className="resume-banner" role="status" aria-live="polite">
-              <div>
-                <p className="resume-title">You have an unfinished test in this session.</p>
-                <p className="resume-meta">
-                  {resumeData?.setName || activeSet?.name || 'Practice test'} · {resumeData?.answeredCount || 0}/
-                  {resumeData?.totalQuestions || totalQuestions || 20} answered
+          {isCompleteView ? (
+            <div className="result-panel">
+              <div className="result-hero">
+                <div className="result-breadcrumbs">
+                  <Link href="/">Home</Link>
+                  <span>/</span>
+                  <span>Practice</span>
+                  <span>/</span>
+                  <span>Result</span>
+                </div>
+                <h1 className="result-title">{completedSummary.setName}</h1>
+                <p className={`result-badge ${completedSummary.passed ? 'pass' : 'fail'}`}>
+                  {completedSummary.passed ? 'Pass' : 'Not Passed'}
                 </p>
               </div>
-              <div className="resume-actions">
-                <button type="button" className="primary-btn" onClick={handleResumeContinue}>
-                  Continue
+
+              <div className="result-metrics">
+                <article className="result-metric">
+                  <span>Score</span>
+                  <strong>{completedSummary.correct}/{completedSummary.total}</strong>
+                  <small>{completedSummary.accuracy}%</small>
+                </article>
+                <article className="result-metric">
+                  <span>Time</span>
+                  <strong>{formatDuration(completedSummary.elapsedSeconds || 0)}</strong>
+                  <small>completed</small>
+                </article>
+                <article className="result-metric">
+                  <span>To Pass</span>
+                  <strong>{completedSummary.passingScore}</strong>
+                  <small>correct needed</small>
+                </article>
+              </div>
+
+              <div className="result-progress">
+                <div className="result-progress-bar" aria-hidden="true">
+                  <span
+                    className="result-progress-correct"
+                    style={{ width: `${(completedSummary.correct / completedSummary.total) * 100}%` }}
+                  />
+                </div>
+                <div className="result-progress-meta">
+                  <span>{completedSummary.correct} correct</span>
+                  <span>{completedSummary.incorrect} wrong</span>
+                </div>
+              </div>
+
+              <p className="result-copy">
+                {completedSummary.passed
+                  ? `You cleared the ${completedSummary.passingScore}/${completedSummary.total} pass mark.`
+                  : `You need ${completedSummary.passingScore} correct answers to pass this mock test.`}{' '}
+                {completedSummary.recommendation}
+              </p>
+
+              <div className="result-recommendation">
+                <p className="result-label">Recommendation</p>
+                <p>{completedSummary.recommendation}</p>
+              </div>
+
+              {completedSummary.topicNeedingPractice !== 'None' ? (
+                <p className="result-topic">Review next: {completedSummary.topicNeedingPractice}</p>
+              ) : null}
+
+              <div className="actions result-actions">
+                <button type="button" className="primary-btn" onClick={handleRetry}>
+                  Retry
                 </button>
-                <button type="button" className="ghost-btn" onClick={handleResumeRestart}>
-                  Restart
+                <Link className="ghost-btn" href="/#session-tracker">
+                  Back to home
+                </Link>
+              </div>
+
+              <div className="result-filters" role="tablist" aria-label="Review filter">
+                <button
+                  type="button"
+                  className={reviewFilter === 'all' ? 'result-filter active' : 'result-filter'}
+                  onClick={() => setReviewFilter('all')}
+                >
+                  All ({reviewCounts.all})
                 </button>
+                <button
+                  type="button"
+                  className={reviewFilter === 'correct' ? 'result-filter active' : 'result-filter'}
+                  onClick={() => setReviewFilter('correct')}
+                >
+                  Correct ({reviewCounts.correct})
+                </button>
+                <button
+                  type="button"
+                  className={reviewFilter === 'wrong' ? 'result-filter active' : 'result-filter'}
+                  onClick={() => setReviewFilter('wrong')}
+                >
+                  Wrong ({reviewCounts.wrong})
+                </button>
+              </div>
+
+              <div className="result-review-grid">
+                {filteredResults.map((result, index) => (
+                  <article key={result.questionId} className="review-card">
+                    <div className="review-card-head">
+                      <div>
+                        <p className="review-topic">{result.topic}</p>
+                        <p className="review-meta">Question {index + 1}</p>
+                      </div>
+                      <span className={result.isCorrect ? 'review-status pass' : 'review-status fail'}>
+                        {result.isCorrect ? 'Correct' : 'Wrong'}
+                      </span>
+                    </div>
+                    <h3 className="review-question">{result.questionText}</h3>
+                    <div className="review-options">
+                      {(result.options || []).map((option) => {
+                        const isCorrectAnswer = option === result.correctAnswer;
+                        const isSelectedWrong = option === result.userAnswer && !result.isCorrect;
+                        const optionClass = isCorrectAnswer
+                          ? 'review-option correct'
+                          : isSelectedWrong
+                            ? 'review-option wrong'
+                            : 'review-option';
+
+                        return (
+                          <div key={`${result.questionId}-${option}`} className={optionClass}>
+                            {option}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {!result.isCorrect ? (
+                      <p className="review-explanation">{result.explanation}</p>
+                    ) : null}
+                  </article>
+                ))}
               </div>
             </div>
-          ) : null}
-
-          <h2>{currentQuestion?.questionText || 'Loading practice data...'}</h2>
-
-          <form className="answers" autoComplete="off" onSubmit={(event) => event.preventDefault()}>
-            {(currentQuestion?.options || []).map((option) => (
-              <label className="answer-option" key={option}>
-                <input
-                  type="radio"
-                  name="answer"
-                  value={option}
-                  checked={answers[currentQuestion.id] === option}
-                  disabled={feedback.visible}
-                  onChange={() => handleSelectAnswer(option)}
-                />
-                <span>{option}</span>
-              </label>
-            ))}
-
-            {currentQuestion?.options?.length ? (
-              <div className="actions">
-                <button type="button" className="ghost-btn" disabled={!feedback.visible} onClick={handleNextQuestion}>
-                  Next question
-                </button>
+          ) : (
+            <>
+              <div className="quiz-head">
+                <div className="chip-stack">
+                  <p className="chip">
+                  {activeSet
+                    ? `${activeSet.name} · Question ${Math.min(questionIndex + 1, activeSet.questions.length)}/${activeSet.questions.length}`
+                    : 'Loading practice set...'}
+                  </p>
+                </div>
               </div>
-            ) : null}
-          </form>
 
-          <div
-            className={`feedback ${feedback.visible ? feedback.kind : 'hidden'}`}
-            role="status"
-            dangerouslySetInnerHTML={{ __html: feedback.visible ? feedback.html : '' }}
-          />
+              <div className="progress-track" aria-live="polite">
+                <div className="progress-meta">
+                  <span>Progress</span>
+                  <strong>{answeredCount}/{totalQuestions || 20} answered</strong>
+                </div>
+                <div
+                  className="progress-bar"
+                  role="progressbar"
+                  aria-valuemin="0"
+                  aria-valuemax={totalQuestions || 20}
+                  aria-valuenow={answeredCount}
+                >
+                  <span style={{ width: `${progressPercent}%` }} />
+                </div>
+              </div>
+
+              {showResumePrompt ? (
+                <div className="resume-banner" role="status" aria-live="polite">
+                  <div>
+                    <p className="resume-title">You have an unfinished test in this session.</p>
+                    <p className="resume-meta">
+                      {resumeData?.setName || activeSet?.name || 'Practice test'} · {resumeData?.answeredCount || 0}/
+                      {resumeData?.totalQuestions || totalQuestions || 20} answered
+                    </p>
+                  </div>
+                  <div className="resume-actions">
+                    <button type="button" className="primary-btn" onClick={handleResumeContinue}>
+                      Continue
+                    </button>
+                    <button type="button" className="ghost-btn" onClick={handleResumeRestart}>
+                      Restart
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              <h2>{currentQuestion?.questionText || 'Loading practice data...'}</h2>
+
+              <form className="answers" autoComplete="off" onSubmit={(event) => event.preventDefault()}>
+                {(currentQuestion?.options || []).map((option) => (
+                  <label className="answer-option" key={option}>
+                    <input
+                      type="radio"
+                      name="answer"
+                      value={option}
+                      checked={answers[currentQuestion.id] === option}
+                      disabled={feedback.visible}
+                      onChange={() => handleSelectAnswer(option)}
+                    />
+                    <span>{option}</span>
+                  </label>
+                ))}
+
+                {currentQuestion?.options?.length ? (
+                  <div className="actions">
+                    <button type="button" className="ghost-btn" disabled={!feedback.visible} onClick={handleNextQuestion}>
+                      Next question
+                    </button>
+                  </div>
+                ) : null}
+              </form>
+
+              <div
+                className={`feedback ${feedback.visible ? feedback.kind : 'hidden'}`}
+                role="status"
+                dangerouslySetInnerHTML={{ __html: feedback.visible ? feedback.html : '' }}
+              />
+            </>
+          )}
         </section>
       </main>
     </div>
